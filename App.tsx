@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { NavBar } from './components/NavBar';
 import { MermaidChart } from './components/MermaidChart';
-import { IconZap, IconAlert, IconCheck, IconTerminal, IconPlay, IconActivity, IconCopy } from './components/Icons';
+import { IconZap, IconAlert, IconCheck, IconTerminal, IconPlay, IconActivity, IconCopy, IconDownload } from './components/Icons';
 import { AppMode, DifficultyLevel, ExplanationResponse, DebugResponse, FlowchartData, SupportedLanguage, ExecutionResponse } from './types';
 import { generateLineByLine, generateFlowchart, analyzeBugs, runCodeSimulation } from './services/geminiService';
 import Editor from '@monaco-editor/react';
@@ -118,6 +118,9 @@ const LANG_KEY = 'codementor_saved_lang';
 const MODE_KEY = 'codementor_saved_mode';
 
 const App: React.FC = () => {
+  // Splash Screen State
+  const [showSplash, setShowSplash] = useState(true);
+
   const [mode, setMode] = useState<AppMode>(() => {
     return (localStorage.getItem(MODE_KEY) as AppMode) || AppMode.EXPLAIN;
   });
@@ -149,6 +152,17 @@ const App: React.FC = () => {
   const [flowchartData, setFlowchartData] = useState<FlowchartData | null>(null);
   const [debugData, setDebugData] = useState<DebugResponse | null>(null);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
+  
+  // Stores the rendered SVG string for downloading
+  const [currentSvg, setCurrentSvg] = useState<string>('');
+
+  // Splash Screen Timer
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSplash(false);
+    }, 3000); // 3 seconds
+    return () => clearTimeout(timer);
+  }, []);
 
   // Save code and mode to localStorage whenever they change
   useEffect(() => {
@@ -176,6 +190,7 @@ const App: React.FC = () => {
         setFlowchartData(null);
         setDebugData(null);
         setExecutionResult(null);
+        setCurrentSvg('');
     }
   };
 
@@ -187,6 +202,109 @@ const App: React.FC = () => {
       console.error('Failed to copy: ', err);
     });
   }, []);
+
+  const handleDownloadGraph = useCallback(() => {
+    if (!currentSvg) return;
+    
+    try {
+      const parser = new DOMParser();
+      const svgDoc = parser.parseFromString(currentSvg, "image/svg+xml");
+      const svgElement = svgDoc.documentElement;
+      
+      // Get exact dimensions from viewBox to avoid cutting off
+      const viewBox = svgElement.getAttribute('viewBox');
+      let svgWidth = 1200;
+      let svgHeight = 800;
+
+      if (viewBox) {
+        const parts = viewBox.split(/[\s,]+/).filter(Boolean).map(parseFloat);
+        if (parts.length === 4) {
+            svgWidth = parts[2];
+            svgHeight = parts[3];
+        }
+      }
+      
+      // Explicitly set width/height on the SVG to match the viewBox (full content size)
+      svgElement.setAttribute('width', `${svgWidth}`);
+      svgElement.setAttribute('height', `${svgHeight}`);
+      
+      // Remove max-width/height styles that might constrain the image export
+      svgElement.style.maxWidth = 'none';
+      svgElement.style.maxHeight = 'none';
+
+      // Inject styles to ensure the PNG looks like the rendered component
+      const customCss = `
+        .edgePath .path { stroke: #818cf8 !important; stroke-width: 2px !important; stroke-dasharray: 10; fill: none; }
+        .node rect, .node circle, .node polygon { fill: #1e293b !important; stroke: #6366f1 !important; stroke-width: 2px !important; }
+        .node .label { color: #f1f5f9 !important; fill: #f1f5f9 !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 14px; font-weight: 600; }
+        .marker { fill: #818cf8 !important; stroke: #818cf8 !important; }
+        .flowchart-link { stroke: #818cf8 !important; fill: none; }
+      `;
+
+      const styleEl = svgDoc.createElementNS("http://www.w3.org/2000/svg", "style");
+      styleEl.textContent = customCss;
+      svgElement.insertBefore(styleEl, svgElement.firstChild);
+
+      // Serialize back to string
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svgDoc);
+
+      const img = new Image();
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        // Increase scale for better resolution (3x)
+        const scale = 3; 
+        
+        canvas.width = svgWidth * scale;
+        canvas.height = svgHeight * scale;
+        
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+            // Fill background with App's dark theme color (#0f172a - Slate 900)
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw image scaled
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            
+            try {
+                const pngUrl = canvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                a.href = pngUrl;
+                a.download = `flowchart-${new Date().getTime()}.png`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } catch (e) {
+                console.warn("Canvas tainted, falling back to SVG download", e);
+                // Fallback mechanism: Download SVG if PNG fails due to tainting
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `flowchart-${new Date().getTime()}.svg`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setError("Format PNG gagal (Security Restriction), mengunduh sebagai SVG.");
+            }
+        }
+        URL.revokeObjectURL(url);
+      };
+      
+      img.onerror = () => {
+          setError('Gagal memproses gambar untuk unduhan.');
+          URL.revokeObjectURL(url);
+      };
+
+      img.src = url;
+
+    } catch (err) {
+      console.error('Download failed:', err);
+      setError('Gagal mengunduh gambar.');
+    }
+  }, [currentSvg]);
 
   const handleAnalyze = useCallback(async () => {
     setError(null);
@@ -202,6 +320,7 @@ const App: React.FC = () => {
             const result = await generateLineByLine(code, difficulty);
             setExplanation(result);
         } else if (mode === AppMode.FLOWCHART) {
+            setCurrentSvg(''); // Reset previous SVG
             const result = await generateFlowchart(code, difficulty);
             setFlowchartData(result);
         } else if (mode === AppMode.DEBUG) {
@@ -223,6 +342,34 @@ const App: React.FC = () => {
       setLoading(false);
     }
   }, [code, difficulty, mode, language]);
+
+  // Render Splash Screen
+  if (showSplash) {
+      return (
+          <div className="fixed inset-0 z-[100] bg-slate-950 flex flex-col items-center justify-center text-center p-4 animate-in fade-in duration-500">
+              <div className="mb-8 relative">
+                  <div className="w-24 h-24 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-3xl flex items-center justify-center shadow-2xl shadow-indigo-500/20 rotate-3 transform transition-transform hover:rotate-0">
+                      <IconTerminal size={48} className="text-white -rotate-3" />
+                  </div>
+                  <div className="absolute -inset-4 bg-indigo-500/20 blur-2xl rounded-full -z-10"></div>
+              </div>
+              
+              <h1 className="text-4xl md:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-white to-slate-400 mb-3 tracking-tight">
+                  CodeMentor
+              </h1>
+              <h2 className="text-xl md:text-2xl font-semibold text-indigo-400 mb-12">
+                  SMK Al Mubarok Cisalak
+              </h2>
+              
+              <div className="absolute bottom-12 flex flex-col items-center gap-3">
+                  <div className="w-6 h-6 border-2 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin"></div>
+                  <p className="text-xs text-slate-500 uppercase tracking-[0.2em] font-medium">
+                      Developer Asep Ripa'i
+                  </p>
+              </div>
+          </div>
+      );
+  }
 
   return (
     <div className="flex flex-col md:flex-row h-screen bg-slate-900 text-slate-200 overflow-hidden">
@@ -459,18 +606,28 @@ const App: React.FC = () => {
                     {/* Mermaid Controls */}
                     <div className="flex items-center justify-between mb-2 px-1">
                          <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Visualisasi</span>
-                         <button 
-                             onClick={() => handleCopyMermaid(flowchartData.mermaidCode)}
-                             className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-1 rounded border border-indigo-500/20"
-                             title="Salin kode Mermaid.js"
-                         >
-                            {isCopied ? <IconCheck size={12} /> : <IconCopy size={12} />}
-                            {isCopied ? 'Tersalin' : 'Salin Kode'}
-                         </button>
+                         <div className="flex items-center gap-2">
+                             <button 
+                                 onClick={handleDownloadGraph}
+                                 className="flex items-center gap-1.5 text-xs text-slate-300 hover:text-white transition-colors bg-slate-700/50 hover:bg-slate-700 px-2 py-1 rounded border border-slate-600"
+                                 title="Unduh sebagai PNG"
+                             >
+                                <IconDownload size={12} />
+                                Unduh PNG
+                             </button>
+                             <button 
+                                 onClick={() => handleCopyMermaid(flowchartData.mermaidCode)}
+                                 className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors bg-indigo-500/10 hover:bg-indigo-500/20 px-2 py-1 rounded border border-indigo-500/20"
+                                 title="Salin kode Mermaid.js"
+                             >
+                                {isCopied ? <IconCheck size={12} /> : <IconCopy size={12} />}
+                                {isCopied ? 'Tersalin' : 'Salin Kode'}
+                             </button>
+                         </div>
                     </div>
 
                     <div className="flex-1 flex items-center justify-center min-h-[300px] bg-slate-900/50 rounded-lg border border-slate-700/50 p-2 overflow-hidden">
-                        <MermaidChart chart={flowchartData.mermaidCode} />
+                        <MermaidChart chart={flowchartData.mermaidCode} onRender={setCurrentSvg} />
                     </div>
                 </div>
               )}

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 
 interface MermaidChartProps {
   chart: string;
+  onRender?: (svgCode: string) => void;
 }
 
 declare global {
@@ -10,7 +11,7 @@ declare global {
   }
 }
 
-export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
+export const MermaidChart: React.FC<MermaidChartProps> = ({ chart, onRender }) => {
   const ref = useRef<HTMLDivElement>(null);
   const [svg, setSvg] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -24,6 +25,7 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
           startOnLoad: false,
           theme: 'base',
           securityLevel: 'loose',
+          flowchart: { htmlLabels: false }, // Disable HTML labels to ensure PNG export works (prevents canvas tainting)
           themeVariables: {
             primaryColor: '#1e293b',
             primaryTextColor: '#e2e8f0',
@@ -39,6 +41,11 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
         const { svg } = await window.mermaid.render(id, chart);
         setSvg(svg);
         setError('');
+        
+        // Pass the generated SVG back to parent if callback exists
+        if (onRender) {
+          onRender(svg);
+        }
       } catch (e) {
         console.error("Mermaid render error:", e);
         setError("Gagal merender diagram alur. Sintaks mungkin tidak valid.");
@@ -46,7 +53,7 @@ export const MermaidChart: React.FC<MermaidChartProps> = ({ chart }) => {
     };
 
     renderChart();
-  }, [chart]);
+  }, [chart, onRender]);
 
   if (error) {
     return <div className="p-4 text-red-400 bg-red-900/20 rounded-lg text-sm border border-red-800">{error}</div>;

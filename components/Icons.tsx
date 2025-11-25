@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, GitGraph, Bug, ChevronRight, Terminal, AlertTriangle, CheckCircle2, Zap, Play, Globe, Copy } from 'lucide-react';
+import { Activity, GitGraph, Bug, ChevronRight, Terminal, AlertTriangle, CheckCircle2, Zap, Play, Globe, Copy, Download } from 'lucide-react';
 
 export { 
   Activity as IconActivity, 
@@ -12,5 +12,6 @@ export {
   Zap as IconZap,
   Play as IconPlay,
   Globe as IconGlobe,
-  Copy as IconCopy
+  Copy as IconCopy,
+  Download as IconDownload
 };
